@@ -1,13 +1,13 @@
 #!/usr/bin/env python3
 """跨平台脚本：更新各音乐源的 latest.js 文件"""
 
-import shutil
 import sys
 from pathlib import Path
 from typing import Dict
 
 # Latest Version Numbers
 VERSIONS: Dict[str, str] = {
+    'aggregator': '1.0.0',
     'changqing': '1.3.0',
     'flower': '1',
     'grass': '1',

@@ -10,6 +10,7 @@
 
 | 源 | 版本 | 可用平台 | 状态 | 说明 |
 |---|---|---|---|---|
+| **aggregator** | 1.0.0 | **wy, tx, kw, kg** | ✅ **本仓库自研，首选** | 不 eval 任何混淆代码，直接打干净的 HTTP 网关；每平台多网关自动降级。mg 上游已死 |
 | **qdy** | 9.3 | **wy, kw** | ✅ 推荐 | tx 返回 302 到空首页(403)；kg 返回 `{"code":201}`；mg 404 |
 | **changqing** | 1.3.0 | **wy, tx, kw, kg** | ✅ 推荐 | mg 返回 500 JSON。注意 tx/kg 后端会**降级到酷我**资源，可能取到错误的歌 |
 | **sixyin** | 1.2.1 | **wy** | ⚠️ 部分可用 | 后端 `lx.itooi.cn` 已暂停；`mobi.kuwo.cn` 403，仅网易云走官方接口存活 |
@@ -21,8 +22,9 @@
 | juhe | 3 | — | ❌ 失效 | `api.music.lerd.dpdns.org/init.conf` 返回 429，初始化即失败 |
 | lx | 6 | — | ❌ 失效 | 不注册 `request` 处理器；依赖 `88.lxmusic.中国` 服务端 |
 
-> 📌 **本仓库仅 qdy / changqing / sixyin 三个源可用**，其余 7 个源的上游服务均已下线，无法通过修改本地脚本修复。
-> 若要 QQ 音乐 + 无损，优先试 `changqing`（但 tx/kg 会降级到酷我）；要纯网易云无损用 `qdy`。
+> 📌 **首选 `aggregator`**：唯一源码完全可审计、不依赖 eval、不受脚本 md5 校验影响的源。
+> `qdy` / `changqing` / `sixyin` 仍可用但源码是混淆的，行为不可预测。
+> 其余 7 个源的上游服务均已下线，无法通过修改本地脚本修复。
 
 ### ⚠️ Windows 克隆必读
 
@@ -33,7 +35,12 @@
 
 ## 在线导入 - 原始链接
 
-### QDY（推荐，网易云 + 酷我，链路最稳）
+### Aggregator（本仓库自研，首选，网易云+QQ+酷我+酷狗）
+```
+https://raw.githubusercontent.com/pdone/lx-music-source/main/aggregator/latest.js
+```
+
+### QDY（网易云 + 酷我，链路最稳）
 ```
 https://raw.githubusercontent.com/pdone/lx-music-source/main/qdy/latest.js
 ```
@@ -66,6 +73,11 @@ https://raw.githubusercontent.com/pdone/lx-music-source/main/lx/latest.js
 </details>
 
 ## 在线导入 - 加速链接
+
+### Aggregator（首选）
+```
+https://ghproxy.net/raw.githubusercontent.com/pdone/lx-music-source/main/aggregator/latest.js
+```
 
 ### QDY（推荐）
 ```
@@ -126,6 +138,9 @@ DEBUG_REJ=1 node tools/e2e.js juhe         # 打印未捕获的 Promise 拒绝
 
 # 单文件探测
 node tools/probe_url.js "http://example.com/a.mp3"
+
+# 网关能力矩阵（多平台 × 多网关 × type/level）
+node tools/probe_gw.js wy tx
 ```
 
 工具文件：
@@ -138,6 +153,7 @@ node tools/probe_url.js "http://example.com/a.mp3"
 | `tools/probe_url.js` | 探测单个 URL 的状态码 / content-type / Location |
 | `tools/probe_redirect.js` | 跟随重定向链，验证最终是否 `audio/*` |
 | `tools/probe_hash.js` | 校验 grass/flower 的 md5 签名（`md5(脚本.trim())`） |
+| `tools/probe_gw.js` | 网关能力矩阵：探测各网关支持的平台/type/level 组合与返回模式（JSON / 302 / 文本） |
 
 ### 判定标准
 
@@ -159,6 +175,33 @@ node tools/probe_url.js "http://example.com/a.mp3"
 - [ikun](https://github.com/MeoProject/lx-music-api-server)
 - ChangQing（长青SVIP音源 by 元力菌）
 - HuanYin（幻音音源 by 竹佀）
+
+## 本仓库自研：`aggregator`
+
+`aggregator/` 是本仓库唯一从零手写、不经混淆/eval 的音源，设计原则：
+
+| 原则 | 落地方式 |
+|---|---|
+| **不信任远端脚本** | 不 eval 任何混淆代码，只发固定形状的 HTTP 请求；拿到什么就用什么 |
+| **不受行尾影响** | 不做 `md5(脚本内容)` 校验，所以 Windows 的 CRLF/LF 差异不会导致失效 |
+| **多网关降级** | 每平台配 2 个网关，单个网关挂了自动切下一个 |
+| **严格校验返回值** | 只有 `^https?`、长度 ≤2048、非空路径的字符串才算成功，避免把 JSON 错误体当 URL 返回 |
+| **有总预算** | `TOTAL_BUDGET = 15000ms`，防止多网关叠加撞上主进程 20s 硬超时 |
+| **区分失败原因** | 网络错误/超时 → 换网关；网关回 JSON 但 url 为空 → 该网关此歌无版权 → 换网关 |
+
+网关实测行为（决定了代码里的 `mode` 字段）：
+
+| 平台 | 网关 | 返回模式 | 备注 |
+|---|---|---|---|
+| wy | `yinyue.haitangw.net/wy/wy.php?type=flac` | **JSON** `{code,data:{url}}` | `type=flac` 才能拿直链；音质靠 `level`。唯一返回**真网易云链**的路径 |
+| tx | `yinyue.haitangw.net/qq/qq_kw.php?type=mp3` | 裸 URL 文本 | 实际降级到酷我资源 |
+| kw | `musicapi.haitangw.net/music/kw.php?type=mp3` | **302 跳转** | 依赖播放器跟随重定向 |
+| kg | `yinyue.haitangw.net/kg/kg_song_kw.php?type=mp3` | 裸 URL 文本 | 实际降级到酷我资源 |
+| mg | `yinyue.haitangw.net/mg/migu.php` | JSON 500 | **上游已死**：所有歌曲均返回「歌曲下线暂不支持播放」 |
+
+> ⚠️ mg 目前无可用网关，配置仍保留以便上游恢复后自动生效。
+> ⚠️ tx / kg 的网关实际返回酷我资源，存在取到**错误歌曲**的可能（如「晴天」被换成同名别的歌）。
+> 要严格的平台对应关系，请用 **wy**（真网易云）或 **kw**（真酷我）。
 
 ## 项目地址
 

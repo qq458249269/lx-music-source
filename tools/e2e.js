@@ -133,7 +133,12 @@ const ICON = { ok: '✅', bad: '❌', warn: '⚠️ ' }
       if (!src.sources[p]) { console.log(`  ${ICON.warn}${p}: 该源未声明（LX 不会调用）`); continue }
       for (const q of ALL_QUALITIES) {
         let res
-        try { res = await src.call('musicUrl', p, { type: q, musicInfo: buildMusicInfo(p) }) } catch (e) { res = { ok: false, elapsed: 0, error: e.message } }
+        // 兼容两种 info 约定：
+        //   1) info 就是 musicInfo 本体，音质在 info.type   （LX 官方协议 / aggregator 用）
+        //   2) info = { type, musicInfo }                    （部分旧混淆源用）
+        // 所以两者都带上，源爱读哪个读哪个。
+        const mi = buildMusicInfo(p)
+        try { res = await src.call('musicUrl', p, { ...mi, type: q, musicInfo: mi }) } catch (e) { res = { ok: false, elapsed: 0, error: e.message } }
         let line
         if (!res.ok) {
           line = `  ${ICON.bad} ${p}/${q} ${String(res.elapsed).padStart(6)}ms  错误: ${res.error}`
