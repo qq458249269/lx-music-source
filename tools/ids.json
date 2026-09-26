@@ -1,0 +1,50 @@
+{
+  "note": "真实歌曲 ID（周杰伦《晴天》等），由各平台官方搜索接口取得，2026-09 校验",
+  "songs": {
+    "wy": {
+      "name": "晴天(深情版)",
+      "singer": "王俊凯",
+      "songmid": "2652820720",
+      "albumName": "晴天(深情版)",
+      "albumId": "35667432",
+      "interval": 218
+    },
+    "tx": {
+      "name": "晴天",
+      "singer": "周杰伦",
+      "songmid": "0039MnYb0qxYhV",
+      "strMediaMid": "0039MnYb0qxYhV",
+      "songId": 97773,
+      "albumMid": "002rJPO1sM9Yc",
+      "albumName": "叶惠美",
+      "interval": 269
+    },
+    "kw": {
+      "name": "晴天",
+      "singer": "周杰伦",
+      "songmid": "228908",
+      "albumId": "1293",
+      "albumName": "叶惠美",
+      "interval": 269
+    },
+    "kg": {
+      "name": "晴天",
+      "singer": "周杰伦",
+      "songmid": "20505418",
+      "hash": "b3a52a7a958bf0aed0ebfba2e9a818b7",
+      "albumId": "8231978",
+      "albumAudioId": "20505418",
+      "albumName": "叶惠美",
+      "interval": 269
+    },
+    "mg": {
+      "name": "晴天",
+      "singer": "周杰伦",
+      "songmid": "600305D41A0A1E9F",
+      "copyrightId": "600305D41A0A1E9F",
+      "albumId": "16127943",
+      "albumName": "叶惠美",
+      "interval": 269
+    }
+  }
+}
