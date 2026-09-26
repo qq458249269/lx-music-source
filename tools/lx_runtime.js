@@ -206,7 +206,11 @@ function loadSource(filePath) {
   sandbox.self = sandbox
   sandbox.window = sandbox
   vm.createContext(sandbox)
-  vm.runInContext(script, sandbox, { filename: filePath, timeout: 20000 })
+  try {
+    vm.runInContext(script, sandbox, { filename: filePath, timeout: 20000 })
+  } catch (e) {
+    return { filePath, logs, declared: initedPayload, sources: {}, dropped: [], netLog, call: null, loadError: e.message }
+  }
 
   // 有些脚本把 send(inited) 放在 Promise 链里，等一拍
   return new Promise((resolve) => setTimeout(() => resolve(wrapHandle()), 1500))
@@ -225,7 +229,7 @@ function loadSource(filePath) {
   const dropped = Object.keys(initedPayload?.sources || {}).filter((p) => !PLATFORM_WHITELIST.includes(p))
 
   if (!requestHandler) {
-    return { filePath, logs, declared: initedPayload, sources, dropped, loadError: '脚本没有注册 EVENT_NAMES.request 处理器' }
+    return { filePath, logs, declared: initedPayload, sources, dropped, netLog, call: null, loadError: '脚本没有注册 EVENT_NAMES.request 处理器' }
   }
 
   return {

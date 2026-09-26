@@ -96,12 +96,18 @@ const ICON = { ok: '✅', bad: '❌', warn: '⚠️ ' }
       src = await loadSource(file)
     } catch (e) {
       console.log(`\n${ICON.bad} ${name}  加载失败: ${e.message}`)
-      summary.push({ name, loaded: false, error: src.loadError })
+      summary.push({ name, platform: '(加载失败)', quality: '-', ok: false, error: e.message })
+      continue
+    }
+    src.netLog ??= []
+    if (src.loadError) {
+      console.log(`\n=== ${name}  (${path.relative(ROOT, file)}) ===`)
+      console.log(`  ${ICON.bad}加载失败: ${src.loadError}`)
+      summary.push({ name, platform: '(加载失败)', quality: '-', ok: false, error: src.loadError })
       continue
     }
     const declared = Object.keys(src.declared?.sources || {})
     console.log(`\n=== ${name}  (${path.relative(ROOT, file)}) ===`)
-    if (src.loadError) console.log(`  ${ICON.bad}加载失败: ${src.loadError}`)
     console.log(`  声明源: ${declared.join(', ') || '(无)'}   LX 保留: ${Object.keys(src.sources).join(', ') || '(无)'}`)
     if (src.scriptInfo) console.log(`  脚本信息: name=${src.scriptInfo.name} version=${src.scriptInfo.version} author=${src.scriptInfo.author}`)
     if (src.logs.length) {
@@ -114,6 +120,10 @@ const ICON = { ok: '✅', bad: '❌', warn: '⚠️ ' }
       }
     }
     if (src.dropped.length) console.log(`  ${ICON.warn}被 LX 丢弃(不在平台白名单): ${src.dropped.join(', ')}`)
+    if (!Object.keys(src.sources).length) {
+      console.log(`  ${ICON.bad}未通过 LX 平台/音质白名单过滤，LX 不会调用本源`)
+      summary.push({ name, platform: '(无有效源)', quality: '-', ok: false, error: '未通过 LX 平台/音质白名单过滤' })
+    }
     const netMark = src.netLog.length
     for (const [p, q] of Object.entries(src.sources)) {
       if (!q.qualitys.length) console.log(`  ${ICON.warn}${p}: 声明的音质与 LX 无交集 → LX 只会按默认音质请求`)
