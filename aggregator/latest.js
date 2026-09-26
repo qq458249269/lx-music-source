@@ -1,7 +1,7 @@
 /*!
  * @name 聚合音源
- * @description v1.1.0 跨源降级 + 三重校验防错歌
- * @version v1.1.0
+ * @description v1.3.0 跨源降级 + 三重校验防错歌 + 音质降级保播放
+ * @version v1.3.0
  * @author pdone
  * @homepage https://github.com/qq458249269/lx-music-source
  * @netease MUSIC_U=;
@@ -444,8 +444,48 @@ const QUALITIES = ['128k', '320k', 'flac', 'flac24bit']
  *   2. 跨源搜索 + 目标平台直连 —— 错歌风险低（过了三重校验）
  *   3. 本平台降级网关      —— 错歌风险中（网关内部做了平台映射）
  */
+const DEGRADE_MIN_BUDGET = 2500
+
+/**
+ * 音质降级链：从请求音质往下逐级退，最低到 128k。
+ * 高音质失败往往是「无版权 / 网关无此曲」这类**快速失败**，
+ * 此时预算基本没花完，正好拿来用低音质再试一轮。
+ */
+function degradeChain(quality) {
+  const i = QUALITIES.indexOf(quality)
+  return i < 0 ? ['128k'] : QUALITIES.slice(0, i + 1).reverse()
+}
+
+/**
+ * 对外入口：按降级链重试。全程共用一个 deadline，保证总耗时不超预算。
+ */
 async function resolve(source, info, quality) {
   const deadline = Date.now() + TOTAL_BUDGET
+  const chain = degradeChain(quality)
+  const allLog = []
+
+  for (let i = 0; i < chain.length; i++) {
+    const q = chain[i]
+    if (i > 0) {
+      const remain = deadline - Date.now()
+      // 预算不够再开一轮就是白跑，不如保留给「换源」这一个结果
+      if (remain < DEGRADE_MIN_BUDGET) {
+        allLog.push(`✗ 剩余预算 ${remain}ms 不足，放弃降级到 ${q}`)
+        break
+      }
+      allLog.push(`── 降级重试：${quality} → ${q} ──`)
+    }
+    const r = await resolveOnce(source, info, q, deadline)
+    for (const line of r.log) allLog.push(i > 0 ? `[${q}] ${line}` : line)
+    if (r.url) {
+      if (i > 0) allLog.push(`⚠ 已从 ${quality} 降级到 ${q} 以保证播放`)
+      return { url: r.url, log: allLog }
+    }
+  }
+  return { url: null, log: allLog }
+}
+
+async function resolveOnce(source, info, quality, deadline) {
   const target = targetInfo(info)
   const log = []
 
