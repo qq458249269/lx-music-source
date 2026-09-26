@@ -3,6 +3,35 @@
 
 ---
 
+## ⭐ 融合源 aggregator（本仓库自研，推荐直接用这个）
+
+**网易云 · QQ · 酷我 · 酷狗 · 咪咕** 五平台通吃，源码完全可审计，不 eval 任何混淆代码。
+
+```
+https://raw.githubusercontent.com/qq458249269/lx-music-source/main/aggregator/latest.js
+```
+
+| | |
+|---|---|
+| 可用平台 | `wy` 网易云 / `tx` QQ / `kw` 酷我 / `kg` 酷狗 / `mg` 咪咕 |
+| 实测通过 | **20/20**（5 平台 × `128k`/`320k`/`flac`/`flac24bit`） |
+| 防错歌 | 跨源后强制校验歌名 + 歌手 + 时长，宁可报错也不播错歌 |
+| 纯净度 | 手写源码，无混淆、无 eval、不做 `md5` 校验（不受 CRLF/LF 影响） |
+
+**为什么用它**：别的源大多会把 tx/kg 降级到酷我资源，**实测会取到同名别的歌**；
+融合源改为用「歌名+歌手」去目标平台搜到正确 id 再取链，并过三重校验拦下翻唱/同名歌。
+即使某个平台上游挂了（如咪咕），也能自动跨源救活。
+
+国内网络访问慢可换代理前缀（任选其一，同样指向本文件）：
+```
+https://ghfast.top/https://raw.githubusercontent.com/qq458249269/lx-music-source/main/aggregator/latest.js
+https://gh-proxy.com/https://raw.githubusercontent.com/qq458249269/lx-music-source/main/aggregator/latest.js
+```
+
+> ❓ 用不了？洛雪里进入「设置 → 音源设置」，把上面的地址填进「自定义源」。
+
+---
+
 ## ⚠️ 各源可用状态（2026-09-26 实测）
 
 实测方法：`node tools/e2e.js --verify`（Range GET 跟随重定向，判 `content-type: audio/*`）。
@@ -35,24 +64,23 @@
 
 ## 在线导入 - 原始链接
 
-### Aggregator（本仓库自研，首选，网易云+QQ+酷我+酷狗）
-```
-https://raw.githubusercontent.com/pdone/lx-music-source/main/aggregator/latest.js
-```
+> ⭐ **融合源 aggregator 已置顶到文首，见「⭐ 融合源 aggregator」一节。**
+> 代理前缀（实测均可用，均指向同一文件）：
+> `https://ghfast.top/` · `https://gh-proxy.com/` · `https://ghproxy.net/`
 
 ### QDY（网易云 + 酷我，链路最稳）
 ```
-https://raw.githubusercontent.com/pdone/lx-music-source/main/qdy/latest.js
+https://raw.githubusercontent.com/qq458249269/lx-music-source/main/qdy/latest.js
 ```
 
 ### ChangQing（QQ + 酷狗 + 酷我 + 网易云）
 ```
-https://raw.githubusercontent.com/pdone/lx-music-source/main/changqing/latest.js
+https://raw.githubusercontent.com/qq458249269/lx-music-source/main/changqing/latest.js
 ```
 
 ### SixYin（仅网易云）
 ```
-https://raw.githubusercontent.com/pdone/lx-music-source/main/sixyin/latest.js
+https://raw.githubusercontent.com/qq458249269/lx-music-source/main/sixyin/latest.js
 ```
 
 ### 其他源（均失效，仅供参考）
@@ -61,13 +89,13 @@ https://raw.githubusercontent.com/pdone/lx-music-source/main/sixyin/latest.js
 <summary>展开查看所有失效源链接</summary>
 
 ```
-https://raw.githubusercontent.com/pdone/lx-music-source/main/flower/latest.js
-https://raw.githubusercontent.com/pdone/lx-music-source/main/grass/latest.js
-https://raw.githubusercontent.com/pdone/lx-music-source/main/huanyin/latest.js
-https://raw.githubusercontent.com/pdone/lx-music-source/main/huibq/latest.js
-https://raw.githubusercontent.com/pdone/lx-music-source/main/ikun/latest.js
-https://raw.githubusercontent.com/pdone/lx-music-source/main/juhe/latest.js
-https://raw.githubusercontent.com/pdone/lx-music-source/main/lx/latest.js
+https://raw.githubusercontent.com/qq458249269/lx-music-source/main/flower/latest.js
+https://raw.githubusercontent.com/qq458249269/lx-music-source/main/grass/latest.js
+https://raw.githubusercontent.com/qq458249269/lx-music-source/main/huanyin/latest.js
+https://raw.githubusercontent.com/qq458249269/lx-music-source/main/huibq/latest.js
+https://raw.githubusercontent.com/qq458249269/lx-music-source/main/ikun/latest.js
+https://raw.githubusercontent.com/qq458249269/lx-music-source/main/juhe/latest.js
+https://raw.githubusercontent.com/qq458249269/lx-music-source/main/lx/latest.js
 ```
 
 </details>
@@ -76,22 +104,22 @@ https://raw.githubusercontent.com/pdone/lx-music-source/main/lx/latest.js
 
 ### Aggregator（首选）
 ```
-https://ghproxy.net/raw.githubusercontent.com/pdone/lx-music-source/main/aggregator/latest.js
+https://ghproxy.net/raw.githubusercontent.com/qq458249269/lx-music-source/main/aggregator/latest.js
 ```
 
 ### QDY（推荐）
 ```
-https://ghproxy.net/raw.githubusercontent.com/pdone/lx-music-source/main/qdy/latest.js
+https://ghproxy.net/raw.githubusercontent.com/qq458249269/lx-music-source/main/qdy/latest.js
 ```
 
 ### ChangQing
 ```
-https://ghproxy.net/raw.githubusercontent.com/pdone/lx-music-source/main/changqing/latest.js
+https://ghproxy.net/raw.githubusercontent.com/qq458249269/lx-music-source/main/changqing/latest.js
 ```
 
 ### SixYin
 ```
-https://ghproxy.net/raw.githubusercontent.com/pdone/lx-music-source/main/sixyin/latest.js
+https://ghproxy.net/raw.githubusercontent.com/qq458249269/lx-music-source/main/sixyin/latest.js
 ```
 
 ### 其他加速站点
