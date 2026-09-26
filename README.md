@@ -23,13 +23,27 @@ https://raw.githubusercontent.com/qq458249269/lx-music-source/main/aggregator/la
 融合源改为用「歌名+歌手」去目标平台搜到正确 id 再取链，并过三重校验拦下翻唱/同名歌。
 即使某个平台上游挂了（如咪咕），也能自动跨源救活。
 
-国内网络访问慢可换代理前缀（任选其一，同样指向本文件）：
+---
+
+### 国内网络访问慢？换代理前缀
+
+下面每个前缀都指向**同一个文件**，任选其一：
+
 ```
 https://ghfast.top/https://raw.githubusercontent.com/qq458249269/lx-music-source/main/aggregator/latest.js
+```
+
+```
 https://gh-proxy.com/https://raw.githubusercontent.com/qq458249269/lx-music-source/main/aggregator/latest.js
 ```
 
+```
+https://ghproxy.net/https://raw.githubusercontent.com/qq458249269/lx-music-source/main/aggregator/latest.js
+```
+
 > ❓ 用不了？洛雪里进入「设置 → 音源设置」，把上面的地址填进「自定义源」。
+> ⚠️ 拉取失败时换另一个前缀重试，**地址里不要漏掉后面的 `https://`**。
+> ❌ `ghproxy.cn` 已实测失效（返回 200 但是拦截页，不是 JS），别用。
 
 ---
 
