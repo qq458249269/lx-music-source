@@ -10,9 +10,9 @@
 
 | 源 | 版本 | 可用平台 | 状态 | 说明 |
 |---|---|---|---|---|
-| **aggregator** | 1.0.0 | **wy, tx, kw, kg** | ✅ **本仓库自研，首选** | 不 eval 任何混淆代码，直接打干净的 HTTP 网关；每平台多网关自动降级。mg 上游已死 |
+| **aggregator** | 1.1.0 | **wy, tx, kw, kg, mg** | ✅ **本仓库自研，首选** | 不 eval 任何混淆代码；跨源降级 + 三重校验防错歌；咪咕上游已死但可跨源救活。20/20（5 平台 × 4 音质）全通过 |
 | **qdy** | 9.3 | **wy, kw** | ✅ 推荐 | tx 返回 302 到空首页(403)；kg 返回 `{"code":201}`；mg 404 |
-| **changqing** | 1.3.0 | **wy, tx, kw, kg** | ✅ 推荐 | mg 返回 500 JSON。注意 tx/kg 后端会**降级到酷我**资源，可能取到错误的歌 |
+| **changqing** | 1.3.0 | **wy, tx, kw, kg** | ⚠️ 能播但可能错歌 | 后端会把 tx/kg 降级到酷我资源，**实测会取到同名别的歌**。想稳请用 `aggregator` |
 | **sixyin** | 1.2.1 | **wy** | ⚠️ 部分可用 | 后端 `lx.itooi.cn` 已暂停；`mobi.kuwo.cn` 403，仅网易云走官方接口存活 |
 | flower | 1 | — | ❌ 失效 | 后端 `97.64.37.235/flower/v1/*` 路由已移除（404） |
 | grass | 1 | — | ❌ 失效 | 后端 `97.64.37.235/grass/v1/*` 路由已移除（404） |
@@ -23,7 +23,7 @@
 | lx | 6 | — | ❌ 失效 | 不注册 `request` 处理器；依赖 `88.lxmusic.中国` 服务端 |
 
 > 📌 **首选 `aggregator`**：唯一源码完全可审计、不依赖 eval、不受脚本 md5 校验影响的源。
-> `qdy` / `changqing` / `sixyin` 仍可用但源码是混淆的，行为不可预测。
+> `qdy` / `sixyin` 仍可用但源码是混淆的，行为不可预测。
 > 其余 7 个源的上游服务均已下线，无法通过修改本地脚本修复。
 
 ### ⚠️ Windows 克隆必读
@@ -127,6 +127,12 @@ node tools/e2e.js qdy wy tx
 # 真音频验证（Range GET 跟随重定向检查 content-type）
 node tools/e2e.js --verify
 
+# 扩到全部 4 档音质（128k/320k/flac/flac24bit）
+node tools/e2e.js --verify --allq aggregator
+
+# 防错歌回归：同名/同歌手/同时长差的陷阱用例
+node tools/test_nosongmix.js
+
 # 检查 .php 网关链接的重定向链
 node tools/probe_redirect.js "http://example.com/xxx.php?type=mp3&id=xxx"
 
@@ -141,6 +147,9 @@ node tools/probe_url.js "http://example.com/a.mp3"
 
 # 网关能力矩阵（多平台 × 多网关 × type/level）
 node tools/probe_gw.js wy tx
+
+# 搜索接口可用性横向对比
+node tools/probe_search.js
 ```
 
 工具文件：
@@ -154,6 +163,10 @@ node tools/probe_gw.js wy tx
 | `tools/probe_redirect.js` | 跟随重定向链，验证最终是否 `audio/*` |
 | `tools/probe_hash.js` | 校验 grass/flower 的 md5 签名（`md5(脚本.trim())`） |
 | `tools/probe_gw.js` | 网关能力矩阵：探测各网关支持的平台/type/level 组合与返回模式（JSON / 302 / 文本） |
+| `tools/test_nosongmix.js` | **防错歌回归测试**：构造同名/同歌手/同时长差的陷阱用例，验证跨源后拿到的仍是同一首歌 |
+| `tools/probe_kw.js` | 探测酷我旧搜索接口的字段与相关性（结论：已排除该搜索源） |
+| `tools/probe_search.js` | 搜索接口**可用性矩阵**：横向跑 8 个候选接口，看哪些能用、哪些被拒 |
+| `tools/probe_search_fields.js` | 搜索接口**定位质量验证**：已选定的接口能否区分「深情版 vs 原版」并提取到正确 id |
 
 ### 判定标准
 
@@ -178,30 +191,69 @@ node tools/probe_gw.js wy tx
 
 ## 本仓库自研：`aggregator`
 
-`aggregator/` 是本仓库唯一从零手写、不经混淆/eval 的音源，设计原则：
+`aggregator/` 是本仓库唯一从零手写、不经混淆/eval 的音源。
+
+### 核心权衡：「优先保证播放」 vs 「别播错歌」
+
+这两个目标天然矛盾。把 tx 的 `songmid` 直接丢给 kw 网关，数字对不上，
+拿回来的就是**另一首同名歌**；而一味不降级，遇到某平台没版权就彻底播不出。
+
+v1.1.0 用两条规则同时满足：
+
+| 规则 | 做法 |
+|---|---|
+| **1. 跨源只能走「搜索」，不能走「换 id」** | 用 歌名+歌手 去目标平台**搜**，拿到那边**正确的 id** 再取链。这样跨源后拿到的仍是同一首歌 |
+| **2. 搜索结果必须过三重校验** | 歌名相似度 ≥0.7（去括号去标点）+ 歌手匹配 + 时长差 ≤5s，三条全过才采纳。宁可报「未找到匹配歌曲」，也不返回错歌 |
+
+时长是最强判别器。实测：网易云搜「晴天 周杰伦」首条是
+**「晴天(深情版)」- Lucky小爱 278s**，而原版是 269s —— 歌名几乎一样、
+差 9s。光看歌名分不开，加了时长校验后被准确拦下，改走 QQ 拿到真正的原版。
+
+### 取链的三阶段
+
+按**错歌风险由低到高**依次尝试：
+
+1. **本平台直连网关** —— 错歌风险 0（id 天然就是本平台的）。仅 wy/kw 有
+2. **跨源搜索 + 目标平台取链** —— 错歌风险低（过了三重校验）
+3. **本平台降级网关** —— 错歌风险中（网关内部做了平台映射）
+
+所以 `tx` / `kg` / `mg` 通过跨源拿到的网易云/酷我链，比它们自己网关给的
+酷我链**更正确**，而耗时相当。
+
+### 质量约束
 
 | 原则 | 落地方式 |
 |---|---|
-| **不信任远端脚本** | 不 eval 任何混淆代码，只发固定形状的 HTTP 请求；拿到什么就用什么 |
-| **不受行尾影响** | 不做 `md5(脚本内容)` 校验，所以 Windows 的 CRLF/LF 差异不会导致失效 |
-| **多网关降级** | 每平台配 2 个网关，单个网关挂了自动切下一个 |
+| **不信任远端脚本** | 不 eval 任何混淆代码，只发固定形状的 HTTP 请求 |
+| **不受行尾影响** | 不做 `md5(脚本内容)` 校验，Windows 的 CRLF/LF 差异不会导致失效 |
 | **严格校验返回值** | 只有 `^https?`、长度 ≤2048、非空路径的字符串才算成功，避免把 JSON 错误体当 URL 返回 |
-| **有总预算** | `TOTAL_BUDGET = 15000ms`，防止多网关叠加撞上主进程 20s 硬超时 |
-| **区分失败原因** | 网络错误/超时 → 换网关；网关回 JSON 但 url 为空 → 该网关此歌无版权 → 换网关 |
+| **可播性预检** | 网关有时只把 302 目标吐在 body 里，这种链先用 Range GET 手动跟完跳转，确认 `content-type: audio/*` 才返回 |
+| **有总预算** | `TOTAL_BUDGET = 17000ms`，防止多网关叠加撞上主进程 20s 硬超时；预算不足时**跳过跨源直接降级**，把时间留给还能出结果的路 |
+| **区分失败原因** | 上游 5xx → 上游故障（换网关）；网关 404 → 无此歌；JSON 里有 msg → 无版权（换平台） |
 
 网关实测行为（决定了代码里的 `mode` 字段）：
 
 | 平台 | 网关 | 返回模式 | 备注 |
 |---|---|---|---|
-| wy | `yinyue.haitangw.net/wy/wy.php?type=flac` | **JSON** `{code,data:{url}}` | `type=flac` 才能拿直链；音质靠 `level`。唯一返回**真网易云链**的路径 |
-| tx | `yinyue.haitangw.net/qq/qq_kw.php?type=mp3` | 裸 URL 文本 | 实际降级到酷我资源 |
-| kw | `musicapi.haitangw.net/music/kw.php?type=mp3` | **302 跳转** | 依赖播放器跟随重定向 |
-| kg | `yinyue.haitangw.net/kg/kg_song_kw.php?type=mp3` | 裸 URL 文本 | 实际降级到酷我资源 |
-| mg | `yinyue.haitangw.net/mg/migu.php` | JSON 500 | **上游已死**：所有歌曲均返回「歌曲下线暂不支持播放」 |
+| wy | `yinyue.haitangw.net/wy/wy.php?type=flac` | **JSON** `{code,data:{url}}` | `type=flac` 才能拿直链；音质靠 `level`。唯一返回**真网易云链**的路径。支持 `hiLossless`（实测 56MB / 24bit） |
+| kw | `musicapi.haitangw.net/music/kw.php?type=mp3` | **302 跳转** | 真酷我。依赖播放器跟随重定向 |
+| tx | `yinyue.haitangw.net/qq/qq_kw.php?type=mp3` | 裸 URL 文本 | 降级到酷我 |
+| kg | `yinyue.haitangw.net/kg/kg_song_kw.php?type=mp3` | 裸 URL 文本 | 降级到酷我 |
+| mg | `yinyue.haitangw.net/mg/migu.php` | JSON 500 | **上游已死**：所有歌曲均返回「歌曲下线暂不支持播放」。靠跨源救活 |
 
-> ⚠️ mg 目前无可用网关，配置仍保留以便上游恢复后自动生效。
-> ⚠️ tx / kg 的网关实际返回酷我资源，存在取到**错误歌曲**的可能（如「晴天」被换成同名别的歌）。
-> 要严格的平台对应关系，请用 **wy**（真网易云）或 **kw**（真酷我）。
+搜索接口只选相关性可靠的两个：
+
+| 平台 | 接口 | 耗时 | 备注 |
+|---|---|---|---|
+| wy | `music.163.com/api/search/get` | ~0.2s | 相关性一般，常被翻唱版占据首条，靠三重校验挡 |
+| tx | `c.y.qq.com/soso/fcgi-bin/client_search_cp` | ~2.2s | 相关性最好 |
+| ~~kw~~ | `search.kuwo.cn/r.s` | — | **已排除**：搜「晴天 周杰伦」首条是 KTV 伴唱，且新旧 id 格式不通用 |
+| ~~kg~~ | `mobilecdn.kugou.com/api/v3/search/song` | — | **已排除**：需 `kg_music` token，IP 被 Access Deny |
+| ~~mg~~ | 咪咕官方域名 | — | **已排除**：DNS 无解析 |
+
+> ⚠️ 网关本身也会抽风：实测 wy 网关对 `level=320k` 返过
+> `{"code":502,"msg":"上游返回不是有效 JSON","raw":"<html>503..."}`。
+> 所以 20s 硬超时下不能死磕单一网关，必须有降级与跨源。
 
 ## 项目地址
 

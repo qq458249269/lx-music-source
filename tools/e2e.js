@@ -22,7 +22,8 @@ const { loadSource } = require('./lx_runtime')
 const ROOT = path.resolve(__dirname, '..')
 const SONG = JSON.parse(fs.readFileSync(path.join(__dirname, 'ids.json'), 'utf8')).songs
 const ALL_PLATFORMS = ['wy', 'tx', 'kw', 'kg', 'mg']
-const ALL_QUALITIES = ['128k', 'flac']
+// 默认只测 128k / flac（覆盖面与耗时平衡）；给 --allq 可扩到全部 4 档
+const ALL_QUALITIES = process.argv.includes('--allq') ? ['128k', '320k', 'flac', 'flac24bit'] : ['128k', 'flac']
 
 const argv = process.argv.slice(2)
 const VERIFY = argv.includes('--verify')
@@ -45,7 +46,8 @@ function listSources() {
 function buildMusicInfo(platform) {
   const s = SONG[platform]
   if (!s) throw new Error('未知平台 ' + platform)
-  return { ...s, source: platform, img: '', img1: '', typeUrl: {}, types: [], _types: [] }
+  // LX 真实 musicInfo 里 singer 是 {name} 数组（不是字符串），照此构造
+  return { ...s, singer: [{ name: s.singer }], source: platform, img: '', img1: '', typeUrl: {}, types: [], _types: [] }
 }
 
 /**
