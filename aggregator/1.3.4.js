@@ -1,6 +1,6 @@
 /*!
  * @name 聚合音源
- * @description v1.3.4 回退 musicapi 镜像网关（实测导致播放截断）+ 新增按文件大小拦截残缺音频 + 内置加速源自更新
+ * @description v1.3.4 回退 musicapi 镜像网关（实测返回 30 秒试听）+ 体积闸门拦截残缺音频 + 内置加速源自更新（Range 失败自动退回整份）
  * @version v1.3.4
  * @author pdone
  * @homepage https://github.com/qq458249269/lx-music-source
@@ -108,15 +108,20 @@ async function checkUpdate() {
 
   for (const url of UPDATE_URLS) {
     let body = ''
-    try {
-      // 只要头部就够了，Range 能省流量；代理不支持时退回整份（也就 30KB）
-      // 末尾加时间戳打破加速站缓存：不加的话仓库刚推的最新版会被当成旧版，
-      // 表现为「明明发布了却提示已是最新」。
-      const probe = `${url}?_=${Date.now()}`
-      const res = await fetchUrl(probe, UPDATE_TIMEOUT, { Range: 'bytes=0-2047' })
-      if (res.err || res.statusCode !== 200 || !res.body) continue
-      body = String(res.body)
-    } catch { continue }
+    // 末尾加时间戳打破加速站缓存：不加的话仓库刚推的最新版会被当成旧版，
+    // 表现为「明明发布了却提示已是最新」。
+    const probe = `${url}?_=${Date.now()}`
+    // 先用 Range 只取头部（省流量），拿不到就退回整份 —— 加速站对 Range 的支持
+    // 很不一致（实测会直接失败），不退回的话自动更新形同虚设。整份也就 30KB。
+    for (const headers of [{ Range: 'bytes=0-2047' }, null]) {
+      try {
+        const res = await fetchUrl(probe, UPDATE_TIMEOUT, headers)
+        if (res.err || res.statusCode !== 200 || !res.body) continue
+        body = String(res.body)
+      } catch { continue }
+      if (/@version/.test(body.slice(0, 2000))) break
+    }
+    if (!body) continue
 
     const vm = /@version\s+([^\n*]+)/.exec(body)
     const dm = /@description\s+([^\n*]+)/.exec(body)
