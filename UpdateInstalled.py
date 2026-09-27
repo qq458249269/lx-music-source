@@ -97,10 +97,16 @@ def user_api_file() -> Path:
 # ────────────────────────── 下载 ──────────────────────────
 
 def download(path: str, timeout: int = 15) -> bytes:
-    """按加速源优先级依次尝试，返回第一个成功的文件内容"""
+    """
+    按加速源优先级依次尝试，返回第一个成功的文件内容。
+
+    刻意加 `?t=<时间戳>` 打破缓存：加速站（ghfast.top 等）会缓存 raw 的响应，
+    不加参数的话仓库刚推的最新版会被当成旧版，表现为「明明发布了却提示已是最新」。
+    """
     errors: List[str] = []
+    nonce = int(time.time())
     for tpl in MIRRORS:
-        url = tpl.format(repo=REPO, branch=BRANCH, path=path)
+        url = tpl.format(repo=REPO, branch=BRANCH, path=path) + f'?_={nonce}'
         try:
             req = urllib.request.Request(url, headers=UA)
             with urllib.request.urlopen(req, timeout=timeout) as resp:

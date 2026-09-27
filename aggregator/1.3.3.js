@@ -1,6 +1,6 @@
 /*!
  * @name 聚合音源
- * @description v1.3.3 修复洛雪 2.12 嵌套结构 + 302 死链预检 + 内置加速源自更新检查
+ * @description v1.3.3 修复洛雪 2.12 嵌套结构 + 302 死链预检 + 内置加速源自更新检查（带缓存绕过）
  * @version v1.3.3
  * @author pdone
  * @homepage https://github.com/qq458249269/lx-music-source
@@ -110,7 +110,10 @@ async function checkUpdate() {
     let body = ''
     try {
       // 只要头部就够了，Range 能省流量；代理不支持时退回整份（也就 30KB）
-      const res = await fetchUrl(url, UPDATE_TIMEOUT, { Range: 'bytes=0-2047' })
+      // 末尾加时间戳打破加速站缓存：不加的话仓库刚推的最新版会被当成旧版，
+      // 表现为「明明发布了却提示已是最新」。
+      const probe = `${url}?_=${Date.now()}`
+      const res = await fetchUrl(probe, UPDATE_TIMEOUT, { Range: 'bytes=0-2047' })
       if (res.err || res.statusCode !== 200 || !res.body) continue
       body = String(res.body)
     } catch { continue }

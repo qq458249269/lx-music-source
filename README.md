@@ -47,6 +47,35 @@ https://ghproxy.net/https://raw.githubusercontent.com/qq458249269/lx-music-sourc
 
 ---
 
+## 🔄 自动更新（推荐装一次，之后不用再管）
+
+`aggregator` 启动 5 秒后会自己检查有没有新版本，有就弹窗告诉你，点一下打开**加速源地址**下载。
+
+但「弹窗 → 下载 → 重新导入」还是要点三次。真正省事的是用仓库里的更新器，
+它**直接改写洛雪的 `user_api.json`**（等价于重新导入），零点击：
+
+```bash
+# 检查 + 更新（默认 aggregator），更新完自动重启洛雪
+python UpdateInstalled.py --restart
+
+# 只看版本不动文件
+python UpdateInstalled.py --check
+
+# 装成开机自动跑，每 6 小时检查一次
+python UpdateInstalled.py --task
+```
+
+原理：自定义源脚本跑在洛雪的 `user-api` 页面里，只有 `lx.request` / `lx.send` 这一个
+bridge，**没有文件读写权限、也不能重载自己**，所以「自动替换已安装的源」必须由外部程序
+改 `user_api.json`（位置：`%APPDATA%/lx-music-desktop/LxDatas/user_api.json`）。
+更新器沿用洛雪自己的存储格式（`gz_` + zlib + base64），写之前自动备份 `.json.bak`。
+
+> 两个细节：更新器会按 `ghfast.top → gh-proxy.com → ghproxy.net → raw` 顺序尝试，
+> 并在 URL 后加时间戳 —— 加速站会缓存 raw 响应，不打破缓存的话刚发布的版本会被当成旧版。
+> 写入后必须重启洛雪才生效（`--restart` 已经代劳）。
+
+---
+
 ## ⚠️ 各源可用状态（2026-09-26 实测）
 
 实测方法：`node tools/e2e.js --verify`（Range GET 跟随重定向，判 `content-type: audio/*`）。
