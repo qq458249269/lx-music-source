@@ -191,9 +191,13 @@ const FALLBACK_GATEWAY = {
     { name: 'haitangw/wy-302', mode: 'redir',
       url: (id, q) => `http://yinyue.haitangw.net/wy/wy.php?type=mp3&id=${enc(id)}&level=${LEVEL_PARAM[q]}` },
   ],
+  // QQ 的降级网关：两台主机各一条。yinyue 那台宕机时
+  // musicapi 这台能接上，否则 tx 和「kg→tx / mg→tx」跨源会一起没救。
   tx: [
     { name: 'haitangw/qq_kw', mode: 'text',
       url: (id, q) => `https://yinyue.haitangw.net/qq/qq_kw.php?type=mp3&id=${enc(id)}&level=${LEVEL_PARAM[q]}` },
+    { name: 'musicapi/qq_kw', mode: 'text',
+      url: (id, q) => `https://musicapi.haitangw.net/music/qq_kw.php?type=mp3&id=${enc(id)}&level=${LEVEL_PARAM[q]}` },
   ],
   kg: [
     { name: 'haitangw/kg_kw', mode: 'text',
