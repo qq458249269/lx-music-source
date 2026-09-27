@@ -7,7 +7,7 @@ from typing import Dict
 
 # Latest Version Numbers
 VERSIONS: Dict[str, str] = {
-    'aggregator': '1.3.3',
+    'aggregator': '1.3.4',
     'changqing': '1.3.0',
     'flower': '1',
     'grass': '1',

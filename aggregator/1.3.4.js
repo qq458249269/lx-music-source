@@ -1,7 +1,7 @@
 /*!
  * @name 聚合音源
- * @description v1.3.3 修复洛雪 2.12 嵌套结构 + 302 死链预检 + 内置加速源自更新检查（带缓存绕过）
- * @version v1.3.3
+ * @description v1.3.4 回退 musicapi 镜像网关（实测导致播放截断）+ 新增按文件大小拦截残缺音频 + 内置加速源自更新
+ * @version v1.3.4
  * @author pdone
  * @homepage https://github.com/qq458249269/lx-music-source
  * @netease MUSIC_U=;
@@ -161,14 +161,15 @@ const LEVEL_PARAM = {
  * order 小的先试。
  */
 const DIRECT_GATEWAY = {
-  // 网易云：type=flac 返回 JSON {code,data:{url}} 或直接返回裸 URL，拿到 m801.music.126.net 真链。
-  // 两条是**不同主机**：yinyue 那台现在会整个 502（nginx 宕机），留 musicapi 这台兜底，
-  // 免得网易云直连和 tx→wy 跨源一起挂掉。
+  // 网易云：type=flac 返回 JSON {code,data:{url}}，拿到 m801.music.126.net 真链。
+  //
+  // ⚠️ 不要加 musicapi.haitangw.net/music/wy.php 这条「备用主机」：
+  // 1.3.3 加过，用户实测**歌曲只剩几十秒**（该接口返回的是
+  // iot1xx.music.126.net/.../ymusic/... 的试听片段，不是全曲）。
+  // 上游宕机时宁可报「未取到链接」，也不要把截断的音频丢给播放器。
   wy: [
     { name: 'haitangw/wy', mode: 'json',
       url: (id, q) => `https://yinyue.haitangw.net/wy/wy.php?type=flac&id=${enc(id)}&level=${LEVEL_PARAM[q]}` },
-    { name: 'musicapi/wy', mode: 'json',
-      url: (id, q) => `https://musicapi.haitangw.net/music/wy.php?type=flac&id=${enc(id)}&level=${LEVEL_PARAM[q]}` },
   ],
   // 酷我：musicapi 网关返回 302 到 car-er.kuwo.cn，LX 播放器会跟随
   kw: [
@@ -191,13 +192,10 @@ const FALLBACK_GATEWAY = {
     { name: 'haitangw/wy-302', mode: 'redir',
       url: (id, q) => `http://yinyue.haitangw.net/wy/wy.php?type=mp3&id=${enc(id)}&level=${LEVEL_PARAM[q]}` },
   ],
-  // QQ 的降级网关：两台主机各一条。yinyue 那台宕机时
-  // musicapi 这台能接上，否则 tx 和「kg→tx / mg→tx」跨源会一起没救。
+  // QQ 的降级网关。同样不要加 musicapi 那条镜像，理由见上面 wy 的注释。
   tx: [
     { name: 'haitangw/qq_kw', mode: 'text',
       url: (id, q) => `https://yinyue.haitangw.net/qq/qq_kw.php?type=mp3&id=${enc(id)}&level=${LEVEL_PARAM[q]}` },
-    { name: 'musicapi/qq_kw', mode: 'text',
-      url: (id, q) => `https://musicapi.haitangw.net/music/qq_kw.php?type=mp3&id=${enc(id)}&level=${LEVEL_PARAM[q]}` },
   ],
   kg: [
     { name: 'haitangw/kg_kw', mode: 'text',
@@ -539,11 +537,47 @@ async function isPlayable(url, deadline) {
 }
 
 /**
+ * 各音质每秒字节数的**保守下限**（KB/s）。
+ * flac 不按 700KB/s 算 —— 真实 flac 远大于这个值，
+ * 用下限做阈值只会让「完整文件」轻松通过、让「试听片段」被拦下。
+ */
+const MIN_BYTES_PER_SEC = { '128k': 16, '320k': 40, flac: 40, flac24bit: 40 }
+
+/**
+ * 防「试听片段」闸门。
+ *
+ * 背景：上游对无版权资源会返回 30 秒试听（网易云的 ymusic 链接就是这种），
+ * 链接本身 200、能播 content-type 也是 audio/*，所有常规校验都拦不住，
+ * 用户听到的就是「歌只播几十秒就没了」，而脚本还报的是「✓ 命中」。
+ *
+ * 办法：用 Range 拿 content-range 里的总大小，和「按时长+音质算出的理论下限」比。
+ * 阈值取 35% —— 30 秒 / 279 秒 ≈ 11%，稳稳被拦；真实文件几乎不可能低于 35%。
+ * 查不到大小时一律放过，不能因为网关不配合 Content-Range 就误杀好链。
+ */
+async function checkNotPreview(url, intervalSec, quality, deadline) {
+  const sec = Number(intervalSec)
+  if (!Number.isFinite(sec) || sec < 30) return { ok: true }
+  const perSec = MIN_BYTES_PER_SEC[quality] || MIN_BYTES_PER_SEC['128k']
+  const nominal = sec * perSec * 1024
+  let res
+  try { res = await fetchUrl(url, Math.min(REQ_TIMEOUT, deadline - Date.now()), { Range: 'bytes=0-1023' }) } catch { return { ok: true } }
+  if (res.err || !res.statusCode) return { ok: true }
+  const headers = res.headers || {}
+  const cr = String(headers['content-range'] || '')
+  const total = cr.includes('/') ? Number(cr.split('/')[1]) : Number(headers['content-length'] || 0)
+  if (!Number.isFinite(total) || total <= 0) return { ok: true }
+  if (total < nominal * 0.35) {
+    return { ok: false, reason: `疑似试听片段(实际 ${(total / 1048576).toFixed(1)}MB，${sec}s 的${quality}至少该有 ${(nominal / 1048576).toFixed(1)}MB)` }
+  }
+  return { ok: true }
+}
+
+/**
  * 试一个网关。
  * 失败时返回 { url: null, reason }，reason 区分「网络挂了」和「此歌无版权」，
  * 便于决定是换网关还是换平台。
  */
-async function tryGateway(gw, id, quality, deadline) {
+async function tryGateway(gw, id, quality, deadline, interval) {
   const remain = deadline - Date.now()
   if (remain <= 500) return { url: null, reason: '预算耗尽' }
 
@@ -579,13 +613,19 @@ async function tryGateway(gw, id, quality, deadline) {
       if (!playable.ok) return { url: null, reason: `302 目标不可播(${playable.reason})` }
       return { url: loc, reason: `302 目标预检通过(${playable.reason})` }
     }
+    const full2 = await checkNotPreview(loc, interval, quality, deadline)
+    if (!full2.ok) return { url: null, reason: full2.reason }
     return { url: loc, reason: '302 跳转(LX 播放器会跟随)' }
   }
 
   if (res.statusCode < 200 || res.statusCode >= 300) {
     return { url: null, reason: /^50\d$/.test(String(res.statusCode)) ? `上游故障(HTTP ${res.statusCode})` : `HTTP ${res.statusCode}` }
   }
-  if (/^audio\//i.test(String(res.contentType || ''))) return { url, reason: '网关内联转发' }
+  if (/^audio\//i.test(String(res.contentType || ''))) {
+    const full = await checkNotPreview(url, interval, quality, deadline)
+    if (!full.ok) return { url: null, reason: full.reason }
+    return { url, reason: '网关内联转发' }
+  }
 
   // 走到这里说明网关自己没内联音频，但它把 302 的目标地址直接吐在 body 里。
   // 这类链接不预检就等于赌播放器会跟跳，所以先验证一遍。
@@ -612,6 +652,8 @@ async function tryGateway(gw, id, quality, deadline) {
     if (!playable.ok) return { url: null, reason: `预检不可播(${playable.reason})` }
     return { url: u0, reason: `预检通过(${playable.reason})` }
   }
+  const full3 = await checkNotPreview(u0, interval, quality, deadline)
+  if (!full3.ok) return { url: null, reason: full3.reason }
   return { url: u0, reason: '已解析' }
 }
 
@@ -694,7 +736,7 @@ async function resolveOnce(source, info, quality, deadline) {
   // ── 阶段 1：本平台直连 ──
   if (ownId) {
     for (const gw of directs) {
-      const r = await tryGateway(gw, ownId, quality, deadline)
+      const r = await tryGateway(gw, ownId, quality, deadline, target.interval)
       if (r.url) { log.push(`✓ ${source} 直连 ${gw.name} (${r.reason})`); return { url: r.url, log } }
       log.push(`✗ ${source} 直连 ${gw.name}: ${r.reason}`)
     }
@@ -719,7 +761,7 @@ async function resolveOnce(source, info, quality, deadline) {
       const targetGws = [...(DIRECT_GATEWAY[other] || []), ...(FALLBACK_GATEWAY[other] || [])]
       if (!targetGws.length) { log.push(`✗ ${source}→${other} 命中「${r.hit.name}」但该平台无取链网关`); continue }
       for (const gw of targetGws) {
-        const g = await tryGateway(gw, r.hit.id, quality, deadline)
+        const g = await tryGateway(gw, r.hit.id, quality, deadline, target.interval)
         if (g.url) {
           log.push(`✓ ${source}→${other}「${r.hit.name}」三重校验通过 → ${gw.name} (${g.reason})`)
           return { url: g.url, log }
@@ -734,7 +776,7 @@ async function resolveOnce(source, info, quality, deadline) {
   // ── 阶段 3：本平台降级兜底 ──
   if (ownId) {
     for (const gw of fallbacks) {
-      const r = await tryGateway(gw, ownId, quality, deadline)
+      const r = await tryGateway(gw, ownId, quality, deadline, target.interval)
       if (r.url) { log.push(`✓ ${source} 降级 ${gw.name} (${r.reason})`); return { url: r.url, log } }
       log.push(`✗ ${source} 降级 ${gw.name}: ${r.reason}`)
     }
