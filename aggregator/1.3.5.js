@@ -1,7 +1,7 @@
 /*!
  * @name 聚合音源
- * @description v1.3.4 回退 musicapi 镜像网关（实测返回 30 秒试听）+ 体积闸门拦截残缺音频 + 内置加速源自更新（Range 失败自动退回整份）
- * @version v1.3.4
+ * @description v1.3.5 跨源搜索与降级网关并发预取（取用顺序不变，仍优先三重校验）+ 体积闸门拦截残缺音频 + 内置加速源自更新
+ * @version v1.3.5
  * @author pdone
  * @homepage https://github.com/qq458249269/lx-music-source
  * @netease MUSIC_U=;
@@ -70,9 +70,9 @@ const UPDATE_URLS = [
   'https://raw.githubusercontent.com/qq458249269/lx-music-source/main/aggregator/latest.js',
 ]
 /** 单个更新地址的超时。更新检查不能拖慢启动，也不能拖慢取链。 */
-const UPDATE_TIMEOUT = 4000
-/** 启动后延迟多久开始检查（秒）。避开刚启动那波歌单/播放器初始化请求。 */
-const UPDATE_DELAY = 5000
+const UPDATE_TIMEOUT = 3000
+/** 启动后延迟多久开始检查（秒）。避开启动那波请求和用户的第一次播放。 */
+const UPDATE_DELAY = 8000
 
 /** 'v1.3.2' → [1,3,2]；解析不出来返回 null */
 function parseVersion(v) {
@@ -738,25 +738,44 @@ async function resolveOnce(source, info, quality, deadline) {
   const directs = DIRECT_GATEWAY[source] || []
   const fallbacks = FALLBACK_GATEWAY[source] || []
 
-  // ── 阶段 1：本平台直连 ──
-  if (ownId) {
-    for (const gw of directs) {
-      const r = await tryGateway(gw, ownId, quality, deadline, target.interval)
-      if (r.url) { log.push(`✓ ${source} 直连 ${gw.name} (${r.reason})`); return { url: r.url, log } }
-      log.push(`✗ ${source} 直连 ${gw.name}: ${r.reason}`)
+  // ── 阶段 1：本平台直连（错歌风险 0，最快，优先）──
+  // 同一平台的多个直连网关互不依赖，并发取，先成功者胜。
+  if (ownId && directs.length) {
+    const results = await Promise.all(directs.map((gw) => tryGateway(gw, ownId, quality, deadline, target.interval)))
+    for (let i = 0; i < directs.length; i++) {
+      const r = results[i]
+      if (r.url) { log.push(`✓ ${source} 直连 ${directs[i].name} (${r.reason})`); return { url: r.url, log } }
     }
+    // 全部失败时按配置顺序逐条记录，保留可读的排查信息
+    for (let i = 0; i < directs.length; i++) log.push(`✗ ${source} 直连 ${directs[i].name}: ${results[i].reason}`)
   }
 
-  // ── 阶段 2：跨源搜索 ──
-  // 必须确认还剩足够预算再进这个阶段，否则跑了也是白跑
-  // 预算不够时应直接跳到阶段 3 降级网关，把时间留给还能出结果的路
-  if (target.name) {
-    for (const other of CROSS_SOURCE_ORDER[source] || []) {
-      if (deadline - Date.now() < 3000) { log.push('✗ 预算不足，跳过剩余跨源'); break }
-      const r = await searchVerified(target, other, deadline)
-      if (!r) { log.push(`✗ ${source}→${other} 搜索失败`); continue }
+  // ── 阶段 2 + 3：跨源搜索 与 本平台降级网关 并发 ──
+  //
+  // 这两条路互不依赖（一个用「歌名+歌手」搜正确 id，一个让网关自己做平台映射），
+  // 串行跑等于白等一个 RTT。改成同时发起，但**取用顺序不变**：
+  // 先等跨源（错歌风险低），它失败才用降级的结果。
+  // 副作用是当上游有台机器挂掉时（实测会白等 5s 超时），
+  // 另一条路的请求早就在跑了，整体耗时从「相加」变成「取慢的那个」。
+  const others = target.name ? (CROSS_SOURCE_ORDER[source] || []) : []
+  if (!target.name) log.push('✗ musicInfo 无歌名，跳过跨源（无法校验是否同一首歌）')
+  else if (!others.length) log.push(`✗ ${source} 没有可用的跨源平台`)
+
+  // 跨源：多个目标平台的搜索也并发发起，结果仍按配置优先级依次取用
+  const crossTask = (async () => {
+    const out = { url: null, log: [] }
+    if (!others.length || deadline - Date.now() < 3000) {
+      if (others.length) out.log.push('✗ 预算不足，跳过跨源')
+      return out
+    }
+    const searched = await Promise.all(others.map((o) => searchVerified(target, o, deadline)))
+    for (let i = 0; i < others.length; i++) {
+      const other = others[i]
+      const r = searched[i]
+      if (out.url) break
+      if (!r) { out.log.push(`✗ ${source}→${other} 搜索失败`); continue }
       if (!r.hit) {
-        log.push(`✗ ${source}→${other} 无匹配（${(r.rejects || []).slice(0, 2).join('; ')}）`)
+        out.log.push(`✗ ${source}→${other} 无匹配（${(r.rejects || []).slice(0, 2).join('; ')}）`)
         continue
       }
       // 用目标平台搜到的 id 走目标平台的网关。
@@ -764,28 +783,41 @@ async function resolveOnce(source, info, quality, deadline) {
       // 降级网关取链。所以这里必须把直连和降级都遍历一遍，
       // 否则搜到了正确 id 却没有网关可用，会静默失败。
       const targetGws = [...(DIRECT_GATEWAY[other] || []), ...(FALLBACK_GATEWAY[other] || [])]
-      if (!targetGws.length) { log.push(`✗ ${source}→${other} 命中「${r.hit.name}」但该平台无取链网关`); continue }
-      for (const gw of targetGws) {
-        const g = await tryGateway(gw, r.hit.id, quality, deadline, target.interval)
-        if (g.url) {
-          log.push(`✓ ${source}→${other}「${r.hit.name}」三重校验通过 → ${gw.name} (${g.reason})`)
-          return { url: g.url, log }
+      if (!targetGws.length) { out.log.push(`✗ ${source}→${other} 命中「${r.hit.name}」但该平台无取链网关`); continue }
+      const gs = await Promise.all(targetGws.map((gw) => tryGateway(gw, r.hit.id, quality, deadline, target.interval)))
+      for (let j = 0; j < targetGws.length; j++) {
+        if (gs[j].url) {
+          out.log.push(`✓ ${source}→${other}「${r.hit.name}」三重校验通过 → ${targetGws[j].name} (${gs[j].reason})`)
+          out.url = gs[j].url
+          break
         }
-        log.push(`✗ ${source}→${other} 命中「${r.hit.name}」但取链失败: ${g.reason}`)
       }
+      if (!out.url) out.log.push(`✗ ${source}→${other} 命中「${r.hit.name}」但取链失败: ${gs.map((g) => g.reason).join('; ')}`)
     }
-  } else {
-    log.push('✗ musicInfo 无歌名，跳过跨源（无法校验是否同一首歌）')
-  }
+    return out
+  })()
 
-  // ── 阶段 3：本平台降级兜底 ──
-  if (ownId) {
-    for (const gw of fallbacks) {
-      const r = await tryGateway(gw, ownId, quality, deadline, target.interval)
-      if (r.url) { log.push(`✓ ${source} 降级 ${gw.name} (${r.reason})`); return { url: r.url, log } }
-      log.push(`✗ ${source} 降级 ${gw.name}: ${r.reason}`)
+  // 降级网关：与跨源同时发起，作为「跨源全灭时立刻可用」的预取结果
+  const fallbackTask = (async () => {
+    const out = { url: null, log: [] }
+    if (!ownId || !fallbacks.length) return out
+    const gs = await Promise.all(fallbacks.map((gw) => tryGateway(gw, ownId, quality, deadline, target.interval)))
+    for (let i = 0; i < fallbacks.length; i++) {
+      if (gs[i].url) { out.log.push(`✓ ${source} 降级 ${fallbacks[i].name} (${gs[i].reason})`); out.url = gs[i].url; break }
     }
-  }
+    for (let i = 0; i < fallbacks.length; i++) {
+      if (!gs[i].url) out.log.push(`✗ ${source} 降级 ${fallbacks[i].name}: ${gs[i].reason}`)
+    }
+    return out
+  })()
+
+  const cross = await crossTask.catch((e) => ({ url: null, log: [`✗ 跨源阶段异常: ${(e && e.message) || e}`] }))
+  for (const line of cross.log) log.push(line)
+  if (cross.url) return { url: cross.url, log }
+
+  const fb = await fallbackTask.catch((e) => ({ url: null, log: [`✗ 降级阶段异常: ${(e && e.message) || e}`] }))
+  for (const line of fb.log) log.push(line)
+  if (fb.url) return { url: fb.url, log }
 
   return { url: null, log }
 }
