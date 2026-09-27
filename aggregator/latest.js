@@ -161,10 +161,14 @@ const LEVEL_PARAM = {
  * order 小的先试。
  */
 const DIRECT_GATEWAY = {
-  // 网易云：type=flac 返回 JSON {code,data:{url}}，拿到 m801.music.126.net 真链
+  // 网易云：type=flac 返回 JSON {code,data:{url}} 或直接返回裸 URL，拿到 m801.music.126.net 真链。
+  // 两条是**不同主机**：yinyue 那台现在会整个 502（nginx 宕机），留 musicapi 这台兜底，
+  // 免得网易云直连和 tx→wy 跨源一起挂掉。
   wy: [
     { name: 'haitangw/wy', mode: 'json',
       url: (id, q) => `https://yinyue.haitangw.net/wy/wy.php?type=flac&id=${enc(id)}&level=${LEVEL_PARAM[q]}` },
+    { name: 'musicapi/wy', mode: 'json',
+      url: (id, q) => `https://musicapi.haitangw.net/music/wy.php?type=flac&id=${enc(id)}&level=${LEVEL_PARAM[q]}` },
   ],
   // 酷我：musicapi 网关返回 302 到 car-er.kuwo.cn，LX 播放器会跟随
   kw: [
