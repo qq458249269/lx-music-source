@@ -46,8 +46,13 @@ function listSources() {
 function buildMusicInfo(platform) {
   const s = SONG[platform]
   if (!s) throw new Error('未知平台 ' + platform)
-  // LX 真实 musicInfo 里 singer 是 {name} 数组（不是字符串），照此构造
-  return { ...s, singer: [{ name: s.singer }], source: platform, img: '', img1: '', typeUrl: {}, types: [], _types: [] }
+  // 严格照洛雪 2.12.x 实际发出的形态构造（从 user-api 页面抓的真实请求）：
+  //   - musicInfo 嵌在 info.musicInfo 里，不是平铺
+  //   - singer 是字符串（'周杰伦'），不是 {name} 数组
+  //   - interval 是 '04:41' 这种 mm:ss 字符串，不是秒数
+  //   - 没有 type 字段（type 在外层）
+  const interval = `${String(Math.floor(s.interval / 60)).padStart(2, '0')}:${String(s.interval % 60).padStart(2, '0')}`
+  return { ...s, singer: s.singer, source: platform, interval, img: '', img1: '', typeUrl: {}, types: [], _types: [] }
 }
 
 /**
@@ -135,12 +140,12 @@ const ICON = { ok: '✅', bad: '❌', warn: '⚠️ ' }
       if (!src.sources[p]) { console.log(`  ${ICON.warn}${p}: 该源未声明（LX 不会调用）`); continue }
       for (const q of ALL_QUALITIES) {
         let res
-        // 兼容两种 info 约定：
-        //   1) info 就是 musicInfo 本体，音质在 info.type   （LX 官方协议 / aggregator 用）
-        //   2) info = { type, musicInfo }                    （部分旧混淆源用）
-        // 所以两者都带上，源爱读哪个读哪个。
+        // 严格按洛雪 2.12.x 的真实约定：info = { type, musicInfo }。
+        // 之前这里额外平铺了一份字段，等于同时喂两种形态，
+        // 结果 aggregator 读 info.name 读不到真正值（真实是 info.musicInfo.name）
+        // 这种 bug 在测试里永远测不出来 —— 只能照真实形态喂。
         const mi = buildMusicInfo(p)
-        try { res = await src.call('musicUrl', p, { ...mi, type: q, musicInfo: mi }) } catch (e) { res = { ok: false, elapsed: 0, error: e.message } }
+        try { res = await src.call('musicUrl', p, { type: q, musicInfo: mi }) } catch (e) { res = { ok: false, elapsed: 0, error: e.message } }
         let line
         if (!res.ok) {
           line = `  ${ICON.bad} ${p}/${q} ${String(res.elapsed).padStart(6)}ms  错误: ${res.error}`

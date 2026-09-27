@@ -150,6 +150,33 @@ const ID_PICKER = {
   mg: (m) => m.copyrightId || m.songmid || m.id,
 }
 
+/**
+ * 洛雪 2.12.x 传进来的 musicInfo **嵌套在 info.musicInfo 里**：
+ *   { type: '320k', musicInfo: { name, singer, source, songmid, interval: '04:41', … } }
+ * 而旧版 / 部分调用方是平铺的。为了不挑客户端版本，两种都认。
+ */
+function unwrapInfo(info) {
+  if (!info || typeof info !== 'object') return { musicInfo: {}, quality: '128k' }
+  if (info.musicInfo && typeof info.musicInfo === 'object') {
+    return { musicInfo: info.musicInfo, quality: info.type || info.musicInfo.type || '128k' }
+  }
+  return { musicInfo: info, quality: info.type || '128k' }
+}
+
+/**
+ * 时长归一化成秒。洛雪给的是 '04:41' / '1:02:03' 这种字符串，
+ * 直接 Number() 会得到 NaN，三重校验里的时长判别就整个失效了。
+ */
+function parseInterval(v) {
+  if (v == null || v === '') return null
+  if (typeof v === 'number') return Number.isFinite(v) ? v : null
+  const str = String(v).trim()
+  if (/^\d+$/.test(str)) return Number(str)
+  const parts = str.split(':').map((x) => Number(x))
+  if (parts.some((n) => !Number.isFinite(n))) return null
+  return parts.reduce((acc, n) => acc * 60 + n, 0)
+}
+
 /* ============================ HTTP ============================ */
 
 function enc(s) { return encodeURIComponent(String(s)) }
@@ -292,7 +319,7 @@ function targetInfo(info) {
   return {
     name: info.name || info.songname || '',
     singer: info.singer || info.singers || [],
-    interval: info.interval != null ? Number(info.interval) : null,
+    interval: parseInterval(info.interval),
   }
 }
 
@@ -545,11 +572,13 @@ async function resolve(source, info, quality) {
 }
 
 async function resolveOnce(source, info, quality, deadline) {
-  const target = targetInfo(info)
+  // info 可能是 { type, musicInfo } 也可能已平铺，统一在这里解包
+  const mi = (info && info.musicInfo) || info || {}
+  const target = targetInfo(mi)
   const log = []
 
-  const ownId = ID_PICKER[source] ? ID_PICKER[source](info) : null
-  const ownGateways = [...(DIRECT_GATEWAY[source] || []), ...(FALLBACK_GATEWAY[source] || [])]
+  const ownId = ID_PICKER[source] ? ID_PICKER[source](mi) : null
+  if (!ownId) log.push(`✗ ${source} musicInfo 里没有可用 id（字段: ${Object.keys(mi).join(',')}）`)
   const directs = DIRECT_GATEWAY[source] || []
   const fallbacks = FALLBACK_GATEWAY[source] || []
 
@@ -614,14 +643,20 @@ lx.on(lx.EVENT_NAMES.request, ({ source, action, info }) => {
   if (action !== 'musicUrl') return Promise.reject(new Error(`不支持的操作: ${action}`))
   if (ALL_PLATFORMS.indexOf(source) < 0) return Promise.reject(new Error(`不支持的源: ${source}`))
 
-  const quality = info && info.type ? info.type : '128k'
+  // 洛雪 2.12.x 传的是 { type, musicInfo }，旧版是平铺的 —— 两种都认
+  const { musicInfo, quality: rawQuality } = unwrapInfo(info)
+  const quality = rawQuality || '128k'
   const q = QUALITIES.indexOf(quality) > -1 ? quality : '128k'
+  // 洛雪不同版本传进来的 musicInfo 字段差异很大（name/songmid/songname…），
+  // 出问题时必须能看到它到底给了什么，所以原样打一条。
+  dlog('收到 musicInfo:', JSON.stringify(musicInfo), '音质:', quality)
 
   // 兜底 try/catch：任何一步意外抛错（网络库同步抛、字段为 null、运行时缺 API…）
   // 都不再让异常裸奔成客户端那句无信息的「换源失败」，而是把真实错误带出去。
-  return resolve(source, info || {}, q).then((r) => {
+  return resolve(source, { ...musicInfo, type: q }, q).then((r) => {
     if (r.url) return r.url
-    const detail = r.log.slice(-4).join(' | ')
+    // 报错里带上完整日志：只留最后 4 行会把「直连网关为什么失败」这条关键信息截掉
+    const detail = r.log.join(' | ').slice(0, 900)
     throw new Error(`聚合源：${source} 未取到链接。${detail}`)
   }).catch((e) => {
     dlog('✗ 异常：', (e && e.stack) || e)
