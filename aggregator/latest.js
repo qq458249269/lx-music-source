@@ -1,7 +1,7 @@
 /*!
  * @name 聚合音源
- * @description v1.3.1 诊断版：内置每步日志 + 超时压缩，修复「换源失败」全平台不可用
- * @version v1.3.1
+ * @description v1.3.2 修复洛雪 2.12 的 info 嵌套结构 + 302 死链预检 + 清理无效跨源
+ * @version v1.3.2
  * @author pdone
  * @homepage https://github.com/qq458249269/lx-music-source
  * @netease MUSIC_U=;
@@ -127,15 +127,15 @@ const FALLBACK_GATEWAY = {
 
 /**
  * 跨源顺序。对每个平台给出「优先去哪些平台搜歌」。
- * 只列搜索质量可靠的平台：
+ * 只列 SEARCH_API 里真正实现了的平台：
  *   - 网易云 music.163.com/api/search/get（相关性尚可，300ms）
  *   - QQ c.y.qq.com/soso/fcgi-bin/client_search_cp（相关性最好，2.2s）
- * 已排除：酷我（旧接口搜「晴天 周杰伦」首条是 KTV 伴奏，且新旧 id 格式不通用）、
+ * 已排除：酷我（SEARCH_API 里没有它，写进来只会每次都「搜索失败」白跑一轮）、
  *        酷狗（需 kg_music token，IP 被 Access Deny）、咪咕（DNS 无解析）。
  */
 const CROSS_SOURCE_ORDER = {
-  wy: ['kw'],       // 网易云直连已足够，跨源只作救命用；酷我搜索质量差故不放前面
-  tx: ['wy', 'kw'],
+  wy: [],           // 网易云直连已足够，且无处可搜
+  tx: ['wy'],
   kw: ['wy', 'tx'],
   kg: ['wy', 'tx'],
   mg: ['wy', 'tx'],
@@ -676,7 +676,8 @@ lx.on(lx.EVENT_NAMES.request, ({ source, action, info }) => {
 
 lx.send(lx.EVENT_NAMES.inited, {
   status: true,
-  // 诊断需要：打开开发者工具才能看到上面 dlog 打出的每一步原因
-  openDevTools: true,
+  // 不自动弹开发者工具窗口（吵），但保留 dlog 日志：
+  // 需要排查时按 Ctrl+Shift+I 打开控制台就能看到每一步原因。
+  openDevTools: false,
   sources: Object.fromEntries(ALL_PLATFORMS.map((p) => [p, { type: 'music', actions: ['musicUrl'], qualitys: QUALITIES }])),
 })
