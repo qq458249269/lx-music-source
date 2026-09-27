@@ -46,5 +46,53 @@
       "albumName": "叶惠美",
       "interval": 269
     }
+  },
+  "songs_wellknown": {
+    "note": "各平台同一首 mainstream 歌（周杰伦《晴天》269s），用来测「正常取链」路径。songs 里的深情版是刻意设计的错歌陷阱，会被三重校验正确拦下，不适合当通用通过率指标。",
+    "wy": {
+      "name": "晴天",
+      "singer": "周杰伦",
+      "songmid": "186016",
+      "albumName": "叶惠美",
+      "albumId": "186501",
+      "interval": 269
+    },
+    "tx": {
+      "name": "晴天",
+      "singer": "周杰伦",
+      "songmid": "0039MnYb0qxYhV",
+      "strMediaMid": "0039MnYb0qxYhV",
+      "songId": 97773,
+      "albumMid": "002rJPO1sM9Yc",
+      "albumName": "叶惠美",
+      "interval": 269
+    },
+    "kw": {
+      "name": "晴天",
+      "singer": "周杰伦",
+      "songmid": "228908",
+      "albumId": "1293",
+      "albumName": "叶惠美",
+      "interval": 269
+    },
+    "kg": {
+      "name": "晴天",
+      "singer": "周杰伦",
+      "songmid": "20505418",
+      "hash": "b3a52a7a958bf0aed0ebfba2e9a818b7",
+      "albumId": "8231978",
+      "albumAudioId": "20505418",
+      "albumName": "叶惠美",
+      "interval": 269
+    },
+    "mg": {
+      "name": "晴天",
+      "singer": "周杰伦",
+      "songmid": "359457",
+      "copyrightId": "60030959",
+      "albumId": "178922",
+      "albumName": "叶惠美",
+      "interval": 269
+    }
   }
 }

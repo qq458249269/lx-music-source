@@ -1,7 +1,7 @@
 /*!
  * @name 聚合音源
- * @description v1.3.5 跨源搜索与降级网关并发预取（取用顺序不变，仍优先三重校验）+ 体积闸门拦截残缺音频 + 内置加速源自更新
- * @version v1.3.5
+ * @description v1.3.6 跨源与降级并发预取 + 歌手中英文/繁简体别名（不再误拒同一人）+ 体积闸门拦截残缺音频 + 内置加速源自更新
+ * @version v1.3.6
  * @author pdone
  * @homepage https://github.com/qq458249269/lx-music-source
  * @netease MUSIC_U=;
@@ -361,6 +361,47 @@ function normSingers(v) {
 }
 
 /**
+ * 歌手别名表。
+ *
+ * 为什么需要：同一个歌手在不同平台/不同年代署名不一样，最典型的是网易云搜索
+ * 《晴天 周杰伦》返回的歌手是「Jay Chou」，而 QQ/酷我给的是「周杰伦」。
+ * 不做这层映射，singerMatch 会判「歌手不符」，把**本来正确的歌**直接拒掉 ——
+ * 实测这会让 tx→wy 的跨源对最热门的歌完全失效。
+ *
+ * 刻意保守：只收录「中英文互译」「繁简体」这类**确定等价**的写法，不做模糊音译。
+ * 歌名和时长两道校验照常把关，放宽的只是署名写法。
+ */
+const SINGER_ALIASES = {
+  '周杰伦': ['周杰伦', '周杰倫', 'jaychou'],
+  '林俊杰': ['林俊杰', '林俊傑', 'jjlin'],
+  '邓紫棋': ['邓紫棋', '鄧紫棋', 'gem'],
+  '王菲': ['王菲', 'faye', 'fayewong'],
+  '陈奕迅': ['陈奕迅', '陳奕迅', 'eason', 'easonchan'],
+  '薛之谦': ['薛之谦', '薛之謙', 'jam'],
+  '毛不易': ['毛不易', 'mao'],
+  '孙燕姿': ['孙燕姿', '孫燕姿', 'stephy', 'sunyanzi'],
+  '张杰': ['张杰', '張傑', 'zhangjie'],
+  '五月天': ['五月天', 'mayday'],
+  '华晨宇': ['华晨宇', '華晨宇', 'hcy'],
+  'TFBOYS': ['tfboys'],
+}
+
+/** 归一化后某个歌手名的全部等价写法 */
+function singerKeys(name) {
+  const keys = new Set([name])
+  const strip = (x) => x.replace(/[\s\-_·・,，.。!！?？~～'"'"`|]+/g, '').toLowerCase()
+  for (const cn of Object.keys(SINGER_ALIASES)) {
+    const list = SINGER_ALIASES[cn]
+    if (!list || !list.length) continue
+    if (name === strip(cn) || list.some((x) => strip(x) === name)) {
+      keys.add(strip(cn))
+      for (const k of list) keys.add(strip(k))
+    }
+  }
+  return keys
+}
+
+/**
  * 歌名相似度（字符集合 Jaccard，0~1）。
  * 归一化后集合重合度，对「晴天」vs「晴天MV」这类足够。
  */
@@ -374,8 +415,24 @@ function titleSim(a, b) {
 }
 
 /** 歌手是否匹配：任一歌手完全相同，或互为子串（「周杰伦」vs「Jay Chou」不行，但「周」vs「周杰伦」行） */
+/**
+ * 一个歌手列表的全部可接受写法。
+ * normSingers 按空格拆词，所以「Jay Chou」会变成 ['jay','chou']，
+ * 单个 token 永远匹配不上别名表里的 'jaychou' —— 必须再把整串（已无空格）也纳入。
+ */
+function allSingerKeys(list) {
+  const keys = new Set()
+  for (const t of list) for (const k of singerKeys(t)) keys.add(k)
+  if (list.length > 1) for (const k of singerKeys(list.join(''))) keys.add(k)
+  return keys
+}
+
 function singerMatch(aList, bList) {
   if (!aList.length || !bList.length) return true // 没歌手信息就不断言，交给时长
+  // 两侧都按「整串 + 逐词」展开后求交集，「周杰伦」vs「Jay Chou」才能碰上
+  const aKeys = allSingerKeys(aList)
+  const bKeys = allSingerKeys(bList)
+  for (const k of aKeys) if (bKeys.has(k)) return true
   for (const a of aList) for (const b of bList) {
     if (a === b) return true
     if (a.length >= 2 && b.length >= 2 && (a.includes(b) || b.includes(a))) return true
@@ -397,7 +454,10 @@ function isSameSong(want, got) {
   const tSim = titleSim(normTitle(want.name), normTitle(got.name))
   if (tSim < 0.7) return { ok: false, reason: `歌名不符(${tSim.toFixed(2)}「${got.name}」)` }
   if (!singerMatch(normSingers(want.singer), normSingers(got.singer))) {
-    return { ok: false, reason: `歌手不符(「${(got.singer || []).map((s) => (typeof s === 'string' ? s : s.name)).join(',')}」)` }
+    // 注意：洛雪给的 musicInfo.singer 是**字符串**，搜索结果里是 {name} 数组，
+    // 这里只用于拼日志，绝不能假设它有 .map —— 曾因此抛 TypeError 让整个请求挂掉。
+    const names = normSingers(got.singer)
+    return { ok: false, reason: `歌手不符(「${names.join(',') || String(got.singer || '')}」)` }
   }
   if (!durationMatch(want.interval, got.interval)) {
     return { ok: false, reason: `时长不符(${want.interval}s vs ${got.interval}s)` }

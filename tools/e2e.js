@@ -9,6 +9,7 @@
  *   node tools/e2e.js qdy wy tx           只测指定源/平台
  *   node tools/e2e.js --file path/to.js   测任意脚本
  *   node tools/e2e.js --verify            额外用 HEAD 验证返回链接是否真的是音频
+ *   node tools/e2e.js --trap             用「错歌陷阱」样本歌测（验证 aggregator 不播错歌）
  *
  * 退出码：0 = 至少一个源全平台可用；1 = 存在失败；2 = 脚本加载失败
  */
@@ -20,13 +21,20 @@ const https = require('https')
 const { loadSource } = require('./lx_runtime')
 
 const ROOT = path.resolve(__dirname, '..')
-const SONG = JSON.parse(fs.readFileSync(path.join(__dirname, 'ids.json'), 'utf8')).songs
+const IDS = JSON.parse(fs.readFileSync(path.join(__dirname, 'ids.json'), 'utf8'))
 const ALL_PLATFORMS = ['wy', 'tx', 'kw', 'kg', 'mg']
 // 默认只测 128k / flac（覆盖面与耗时平衡）；给 --allq 可扩到全部 4 档
 const ALL_QUALITIES = process.argv.includes('--allq') ? ['128k', '320k', 'flac', 'flac24bit'] : ['128k', 'flac']
 
 const argv = process.argv.slice(2)
 const VERIFY = argv.includes('--verify')
+/**
+ * 默认用 songs_wellknown（各平台同一首 mainstream 歌）测「能不能取到链」。
+ * ids.json 里的 songs 是**刻意设计的错歌陷阱**（wy 是「晴天(深情版)」翻唱，
+ * 其余平台是周杰伦原版）：Aggregator 的三重校验会正确地拒绝跨源匹配，
+ * 所以拿它当通用通过率指标会平白判失败。想专门验证防错歌用 --trap。
+ */
+const SONG = argv.includes('--trap') ? IDS.songs : (IDS.songs_wellknown || IDS.songs)
 const fileIdx = argv.indexOf('--file')
 const CUSTOM_FILE = fileIdx >= 0 ? argv[fileIdx + 1] : null
 const positional = argv.filter((a) => !a.startsWith('--') && a !== CUSTOM_FILE)
