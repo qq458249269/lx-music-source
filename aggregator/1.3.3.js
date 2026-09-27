@@ -258,6 +258,9 @@ function parseInterval(v) {
 
 function enc(s) { return encodeURIComponent(String(s)) }
 
+/** 退避等待 */
+function sleep(ms) { return new Promise((r) => setTimeout(r, ms)) }
+
 /**
  * 带超时的 GET。lx.request 是回调风格 cb(err, resp)，且不跟随重定向
  * —— 正好用来拿 3xx 的 Location。网络异常一律转成 statusCode 0，不抛。
@@ -539,7 +542,16 @@ async function tryGateway(gw, id, quality, deadline) {
   let url
   try { url = gw.url(id, quality) } catch { return { url: null, reason: 'URL 构造失败' } }
 
-  const res = await fetchUrl(url, Math.min(REQ_TIMEOUT, remain))
+  let res = await fetchUrl(url, Math.min(REQ_TIMEOUT, remain))
+
+  // 上游 5xx 基本都是网关瞬时限流/抖动（实测 nginx 会直接回 502），
+  // 退避 400ms 重试一次就能拿到，胜过直接判定这首歌没版权。
+  // 只对 5xx 重试：超时是网络问题，重复等待只会白烧预算。
+  if (res.statusCode >= 500 && res.statusCode < 600 && deadline - Date.now() > 1500) {
+    await sleep(400)
+    const retry = await fetchUrl(url, Math.min(REQ_TIMEOUT, deadline - Date.now()))
+    if (!retry.err && retry.statusCode) res = retry
+  }
   if (res.err || res.statusCode === 0) return { url: null, reason: `网络失败(${res.err || '无响应'})` }
 
   if (res.statusCode >= 300 && res.statusCode < 400) {
