@@ -470,7 +470,17 @@ async function tryGateway(gw, id, quality, deadline) {
     if (/\.(html?|php)$/i.test(loc) && !/music|audio|song|stream|\.mp3|\.flac|\.m4a/i.test(loc)) {
       return { url: null, reason: '重定向到网页而非音频' }
     }
-    return isValidUrl(loc) ? { url: loc, reason: '302 跳转(LX 播放器会跟随)' } : { url: null, reason: '重定向目标非法' }
+    if (!isValidUrl(loc)) return { url: null, reason: '重定向目标非法' }
+    // 跳到 .php 网关地址的一律先自己跟完，确认真能拿到音频。
+    // 这些网关时好时坏（实测 wy.php 302 有时直接转出 nginx 404），
+    // 把没验证过的地址丢给播放器，客户端只会报 onError，
+    // 用户看到的是「能取到链但播不出来」，比直接失败还难排查。
+    if (isGatewayAddress(loc)) {
+      const playable = await isPlayable(loc, deadline)
+      if (!playable.ok) return { url: null, reason: `302 目标不可播(${playable.reason})` }
+      return { url: loc, reason: `302 目标预检通过(${playable.reason})` }
+    }
+    return { url: loc, reason: '302 跳转(LX 播放器会跟随)' }
   }
 
   if (res.statusCode < 200 || res.statusCode >= 300) {
