@@ -1,7 +1,7 @@
 /*!
  * @name 聚合音源
- * @description v1.3.2 修复洛雪 2.12 的 info 嵌套结构 + 302 死链预检 + 清理无效跨源
- * @version v1.3.2
+ * @description v1.3.3 修复洛雪 2.12 嵌套结构 + 302 死链预检 + 内置加速源自更新检查
+ * @version v1.3.3
  * @author pdone
  * @homepage https://github.com/qq458249269/lx-music-source
  * @netease MUSIC_U=;
@@ -55,6 +55,80 @@ const SEARCH_TIMEOUT = 3500
  * 这里压到 12000ms：留足 8s 余量，我们自己抛出的错误才能带回真实 reason。
  */
 const TOTAL_BUDGET = 12000
+
+/* ======================= 自动检查更新 ======================= */
+
+/**
+ * 依次尝试这些地址取最新版脚本。**加速源放在前面**，国内直连 raw 放最后兜底。
+ * 全部指向同一个文件（aggregator/latest.js），由 CreateLatest.py 从最新版本号生成。
+ * 注意：ghproxy.cn 已失效（返回 200 但是拦截页），不要加进来。
+ */
+const UPDATE_URLS = [
+  'https://ghfast.top/https://raw.githubusercontent.com/qq458249269/lx-music-source/main/aggregator/latest.js',
+  'https://gh-proxy.com/https://raw.githubusercontent.com/qq458249269/lx-music-source/main/aggregator/latest.js',
+  'https://ghproxy.net/https://raw.githubusercontent.com/qq458249269/lx-music-source/main/aggregator/latest.js',
+  'https://raw.githubusercontent.com/qq458249269/lx-music-source/main/aggregator/latest.js',
+]
+/** 单个更新地址的超时。更新检查不能拖慢启动，也不能拖慢取链。 */
+const UPDATE_TIMEOUT = 4000
+/** 启动后延迟多久开始检查（秒）。避开刚启动那波歌单/播放器初始化请求。 */
+const UPDATE_DELAY = 5000
+
+/** 'v1.3.2' → [1,3,2]；解析不出来返回 null */
+function parseVersion(v) {
+  const m = /(\d+)(?:\.(\d+))?(?:\.(\d+))?/.exec(String(v || ''))
+  if (!m) return null
+  return [Number(m[1]) || 0, Number(m[2]) || 0, Number(m[3]) || 0]
+}
+
+/** a 比 b 新返回 true */
+function isNewer(a, b) {
+  if (!a || !b) return false
+  for (let i = 0; i < 3; i++) {
+    if (a[i] > b[i]) return true
+    if (a[i] < b[i]) return false
+  }
+  return false
+}
+
+/**
+ * 检查有没有新版本，有就调 lx.send(updateAlert) 让洛雪弹更新提示。
+ *
+ * 洛雪的机制：脚本发 updateAlert → 客户端弹窗显示 log，并给一个「打开链接」按钮
+ * 指向 updateUrl。所以这里把**加速源地址**给出去，点一下就能下到最新版，
+ * 再在「设置 → 音源设置 → 自定义源」里重新导入即可。
+ *
+ * 全程不抛错、不阻塞：拉不到就算了，绝不能影响取链。
+ */
+async function checkUpdate() {
+  if (!lx.EVENT_NAMES || !lx.EVENT_NAMES.updateAlert) return
+  const info = lx.currentScriptInfo || {}
+  const current = parseVersion(info.version)
+  if (!current) return
+
+  for (const url of UPDATE_URLS) {
+    let body = ''
+    try {
+      // 只要头部就够了，Range 能省流量；代理不支持时退回整份（也就 30KB）
+      const res = await fetchUrl(url, UPDATE_TIMEOUT, { Range: 'bytes=0-2047' })
+      if (res.err || res.statusCode !== 200 || !res.body) continue
+      body = String(res.body)
+    } catch { continue }
+
+    const vm = /@version\s+([^\n*]+)/.exec(body)
+    const dm = /@description\s+([^\n*]+)/.exec(body)
+    const latest = parseVersion(vm && vm[1])
+    if (!latest || !isNewer(latest, current)) {
+      dlog(`已是最新版本 v${info.version}`)
+      return
+    }
+    const log = `发现新版本 v${String(vm[1]).trim()}\n${dm ? String(dm[1]).trim() : ''}\n\n点击「打开链接」下载最新版，然后在「设置 → 音源设置 → 自定义源」里重新导入即可。`
+    dlog(log)
+    try { lx.send(lx.EVENT_NAMES.updateAlert, { log, updateUrl: url }) } catch { /* 已弹过或不支持 */ }
+    return
+  }
+  dlog('更新检查未取得结果（网络不通或全部加速源失效）')
+}
 /**
  * 诊断日志开关。每一步的成败都打到开发者工具控制台，
  * 这样「换源失败」时能直接看到卡在哪一环（网络 / 无版权 / 搜索 / 解析）。
@@ -185,7 +259,7 @@ function enc(s) { return encodeURIComponent(String(s)) }
  * 带超时的 GET。lx.request 是回调风格 cb(err, resp)，且不跟随重定向
  * —— 正好用来拿 3xx 的 Location。网络异常一律转成 statusCode 0，不抛。
  */
-function fetchUrl(url, timeout) {
+function fetchUrl(url, timeout, extraHeaders) {
   const ms = timeout || REQ_TIMEOUT
   return new Promise((resolve) => {
     let settled = false
@@ -214,7 +288,9 @@ function fetchUrl(url, timeout) {
     // lx.request 在部分环境下对非法 URL 会**同步抛**（而不是回调 err），
     // v1.3.0 没接住，异常会一路冒到 action 里，客户端只显示「换源失败」。
     try {
-      lx.request(url, { method: 'GET', timeout: ms, headers: { 'User-Agent': 'Mozilla/5.0' } }, onResp)
+      const headers = { 'User-Agent': 'Mozilla/5.0' }
+      if (extraHeaders) for (const k of Object.keys(extraHeaders)) headers[k] = extraHeaders[k]
+      lx.request(url, { method: 'GET', timeout: ms, headers }, onResp)
     } catch (e) {
       if (called) return
       called = true
@@ -681,3 +757,6 @@ lx.send(lx.EVENT_NAMES.inited, {
   openDevTools: false,
   sources: Object.fromEntries(ALL_PLATFORMS.map((p) => [p, { type: 'music', actions: ['musicUrl'], qualitys: QUALITIES }])),
 })
+
+// 启动后静默检查更新：有新版就弹提示（不阻塞启动，也不影响取链）
+setTimeout(() => { checkUpdate().catch(() => {}) }, UPDATE_DELAY)
