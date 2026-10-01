@@ -353,7 +353,8 @@ def health_report(probe: bool = False) -> HealthReport:
       1. 装载期有问题的源一律沉到列表末尾（降权），洛雪的界面顺序就是它；
       2. 生效中的源（common.apiSource）坏了 → 切到第一个健康的自定义源，
          一个健康的都没有就退回官方源 kw（和洛雪自己的兜底一致）；
-      3. 上次降级过、这次体检通过的源复位到列表首位，并把生效源切回它。
+      3. 上次降级过、这次体检通过的源复位到列表首位；如果生效的源是我们上次降级过的
+         （或已经退到官方源了），把生效源抢回它；用户自己挑的其他好源不动。
     """
     apis = read_user_api().get('userApis', [])
     checks = [check_source(api) for api in apis]
@@ -377,9 +378,13 @@ def health_report(probe: bool = False) -> HealthReport:
         elif not current.ok:
             ok_ids = [c.id for c in ordered if c.ok]
             want_active = ok_ids[0] if ok_ids else FALLBACK_OFFICIAL
-    # 上次降级的源这次修好了，而当前生效的不是别的自定义源（多半是被我们退到官方源了）
-    # → 自动切回去。只在这种情况下抢手，用户自己在设置里选的自定义源不动。
-    if fixed and not want_active.startswith('user_api'):
+    # 上次降级的源这次修好了 → 把生效源抢回它。条件卡紧：
+    # 只在「现在生效的不是用户自己挑的另一个好源」时才抢：
+    #   - 生效的是官方源：多半就是我们上次退回去的，直接抢回来；
+    #   - 生效的也是我们降过的（那就是另一个坏源，现在更坏了）→ 同样抢回来。
+    # 用户手动选的自定义源一律不动，不跟他们抢。
+    if fixed and (not want_active.startswith('user_api')
+                  or want_active in demoted or want_active not in by_id):
         want_active = fixed[0].id
 
     if probe:
@@ -683,8 +688,11 @@ def main() -> None:
         if need_update:
             print(f'   将更新 {target.get("name")} {target.get("version")} → {meta.get("version")}')
         if report is not None and report.changed:
-            print(f'   将切生效源：{report.active or "(空)"} → {report.want_active}')
-            print(f'   将调整顺序：{" → ".join(report.name_of(i) for i in report.want_order)}')
+            if report.active_changed:
+                print(f'   将切生效源：{report.name_of(report.active) or report.active or "(空)"}'
+                      f' → {report.name_of(report.want_active) or report.want_active}')
+            if report.order_changed:
+                print(f'   将调整顺序：{" → ".join(report.name_of(i) for i in report.want_order)}')
         return
 
     # ── 4. 动文件：先停洛雪（它缓存着这两个文件），写完再启回来
