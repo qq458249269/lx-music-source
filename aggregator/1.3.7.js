@@ -1,7 +1,7 @@
 /*!
  * @name 聚合音源
- * @description v1.3.6 跨源与降级并发预取 + 歌手中英文/繁简体别名（不再误拒同一人）+ 体积闸门拦截残缺音频 + 内置加速源自更新
- * @version v1.3.6
+ * @description v1.3.7 修好日志里版本号双 v（vv1.3.6）的显示：已是最新/发现新版本都只带一个 v
+ * @version v1.3.7
  * @author pdone
  * @homepage https://github.com/qq458249269/lx-music-source
  * @netease MUSIC_U=;
@@ -10,7 +10,7 @@
  */
 
 /**
- * 聚合音源 v1.1.0 —— 跨源降级，但绝不播放错歌
+ * 聚合音源 —— 跨源降级，但绝不播放错歌
  *
  * ── 核心权衡 ──────────────────────────────────────────────
  * 「优先保证播放」和「别播错歌」天然冲突：网关把 A 平台的 id
@@ -100,6 +100,12 @@ function isNewer(a, b) {
  *
  * 全程不抛错、不阻塞：拉不到就算了，绝不能影响取链。
  */
+/** 版本号统一显示：头部注释里的 @version 自带 v 前缀，别再拼一个变成 vv1.3.7 */
+function vtag(version) {
+  const text = String(version == null ? '' : version).trim()
+  return !text || /^v/i.test(text) ? text : `v${text}`
+}
+
 async function checkUpdate() {
   if (!lx.EVENT_NAMES || !lx.EVENT_NAMES.updateAlert) return
   const info = lx.currentScriptInfo || {}
@@ -127,10 +133,10 @@ async function checkUpdate() {
     const dm = /@description\s+([^\n*]+)/.exec(body)
     const latest = parseVersion(vm && vm[1])
     if (!latest || !isNewer(latest, current)) {
-      dlog(`已是最新版本 v${info.version}`)
+      dlog(`已是最新版本 ${vtag(info.version)}`)
       return
     }
-    const log = `发现新版本 v${String(vm[1]).trim()}\n${dm ? String(dm[1]).trim() : ''}\n\n点击「打开链接」下载最新版，然后在「设置 → 音源设置 → 自定义源」里重新导入即可。`
+    const log = `发现新版本 ${vtag(vm[1])}\n${dm ? String(dm[1]).trim() : ''}\n\n点击「打开链接」下载最新版，然后在「设置 → 音源设置 → 自定义源」里重新导入即可。`
     dlog(log)
     try { lx.send(lx.EVENT_NAMES.updateAlert, { log, updateUrl: url }) } catch { /* 已弹过或不支持 */ }
     return
