@@ -1,2 +1,3 @@
 __pycache__/
 *.pyc
+.health_state.json
